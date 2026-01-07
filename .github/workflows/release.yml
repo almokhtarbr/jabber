@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build:
@@ -52,12 +54,10 @@ jobs:
           KEYCHAIN_PATH="${RUNNER_TEMP}/signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
           
-          # Create temporary keychain
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
           security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           
-          # Import certificate
           echo "${CERTIFICATE_P12}" | base64 --decode > "${RUNNER_TEMP}/certificate.p12"
           security import "${RUNNER_TEMP}/certificate.p12" \
             -P "${CERTIFICATE_PASSWORD}" \
@@ -66,10 +66,7 @@ jobs:
             -f pkcs12 \
             -k "${KEYCHAIN_PATH}"
           
-          # Allow codesign to access keychain
-          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
-          
-          # Add to search list
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security list-keychain -d user -s "${KEYCHAIN_PATH}" login.keychain-db
           
           rm "${RUNNER_TEMP}/certificate.p12"
@@ -84,10 +81,10 @@ jobs:
           cp Info.plist "${CONTENTS}/Info.plist"
           
           # Copy Sparkle.framework into the bundle
-          SPARKLE_PATH=$(find .build -name "Sparkle.framework" -type d | head -1)
-          if [[ -n "${SPARKLE_PATH}" ]]; then
-            cp -R "${SPARKLE_PATH}" "${CONTENTS}/Frameworks/"
-          fi
+          cp -R .build/artifacts/sparkle/Sparkle/Sparkle.framework "${CONTENTS}/Frameworks/"
+          
+          # Add rpath for Frameworks directory
+          install_name_tool -add_rpath @executable_path/../Frameworks "${CONTENTS}/MacOS/Jabber"
           
           xcrun actool Sources/Jabber/Assets.xcassets \
             --compile "${CONTENTS}/Resources" \
@@ -98,12 +95,24 @@ jobs:
 
       - name: Sign app bundle
         run: |
-          codesign --force --deep --options runtime \
+          # Sign Sparkle.framework first
+          codesign --force --options runtime --deep \
+            --sign "Developer ID Application" \
+            .build/release-bundle/Jabber.app/Contents/Frameworks/Sparkle.framework
+          
+          # Sign the main executable
+          codesign --force --options runtime \
+            --entitlements Jabber.entitlements \
+            --sign "Developer ID Application" \
+            .build/release-bundle/Jabber.app/Contents/MacOS/Jabber
+          
+          # Sign the app bundle
+          codesign --force --options runtime \
             --entitlements Jabber.entitlements \
             --sign "Developer ID Application" \
             .build/release-bundle/Jabber.app
           
-          codesign --verify --verbose=2 .build/release-bundle/Jabber.app
+          codesign --verify --deep --strict --verbose=2 .build/release-bundle/Jabber.app
 
       - name: Create DMG
         run: |
@@ -144,75 +153,44 @@ jobs:
         run: |
           mv .build/dmg/Jabber.dmg ".build/dmg/Jabber-${{ steps.version.outputs.version }}.dmg"
 
-      - name: Download Sparkle tools
-        run: |
-          curl -L -o /tmp/Sparkle.tar.xz "https://github.com/sparkle-project/Sparkle/releases/download/2.8.1/Sparkle-2.8.1.tar.xz"
-          mkdir -p /tmp/sparkle
-          tar -xf /tmp/Sparkle.tar.xz -C /tmp/sparkle
-
-      - name: Sign update with EdDSA
-        id: sparkle_sign
+      - name: Sign update for Sparkle
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
         run: |
-          echo "${SPARKLE_PRIVATE_KEY}" > /tmp/sparkle_private_key
-          SIGNATURE=$(/tmp/sparkle/bin/sign_update ".build/dmg/Jabber-${{ steps.version.outputs.version }}.dmg" -f /tmp/sparkle_private_key)
-          rm /tmp/sparkle_private_key
-          echo "signature=${SIGNATURE}" >> "$GITHUB_OUTPUT"
-          DMG_SIZE=$(stat -f%z ".build/dmg/Jabber-${{ steps.version.outputs.version }}.dmg")
-          echo "dmg_size=${DMG_SIZE}" >> "$GITHUB_OUTPUT"
+          SIGN_UPDATE=".build/artifacts/sparkle/Sparkle/bin/sign_update"
+          SIGNATURE=$("$SIGN_UPDATE" ".build/dmg/Jabber-${{ steps.version.outputs.version }}.dmg" --ed-key-file <(echo "$SPARKLE_PRIVATE_KEY"))
+          echo "SPARKLE_SIGNATURE=$SIGNATURE" >> $GITHUB_ENV
 
-      - name: Generate appcast item
+      - name: Generate appcast.xml
         run: |
-          mkdir -p .build/appcast
-          PUB_DATE=$(date -R)
-          cat > .build/appcast/appcast.xml << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
-            <channel>
-              <title>Jabber Updates</title>
-              <link>https://rselbach.github.io/jabber/appcast.xml</link>
-              <description>Jabber changelog</description>
-              <language>en</language>
-              <item>
-                <title>Version ${{ steps.version.outputs.version }}</title>
-                <pubDate>${PUB_DATE}</pubDate>
-                <sparkle:version>${{ github.run_number }}</sparkle:version>
-                <sparkle:shortVersionString>${{ steps.version.outputs.version }}</sparkle:shortVersionString>
-                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-                <enclosure url="https://github.com/rselbach/jabber/releases/download/v${{ steps.version.outputs.version }}/Jabber-${{ steps.version.outputs.version }}.dmg"
-                           ${{ steps.sparkle_sign.outputs.signature }}
-                           length="${{ steps.sparkle_sign.outputs.dmg_size }}"
-                           type="application/octet-stream"/>
-              </item>
-            </channel>
-          </rss>
-          EOF
+          VERSION="${{ steps.version.outputs.version }}"
+          DATE=$(date -R)
+          
+          mkdir -p _site
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' > _site/appcast.xml
+          printf '%s\n' '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">' >> _site/appcast.xml
+          printf '%s\n' '  <channel>' >> _site/appcast.xml
+          printf '%s\n' '    <title>Jabber Updates</title>' >> _site/appcast.xml
+          printf '%s\n' '    <link>https://rselbach.github.io/jabber/appcast.xml</link>' >> _site/appcast.xml
+          printf '%s\n' '    <description>Jabber app updates</description>' >> _site/appcast.xml
+          printf '%s\n' '    <language>en</language>' >> _site/appcast.xml
+          printf '%s\n' '    <item>' >> _site/appcast.xml
+          printf '%s\n' "      <title>Version ${VERSION}</title>" >> _site/appcast.xml
+          printf '%s\n' "      <pubDate>${DATE}</pubDate>" >> _site/appcast.xml
+          printf '%s\n' "      <sparkle:version>${{ github.run_number }}</sparkle:version>" >> _site/appcast.xml
+          printf '%s\n' "      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>" >> _site/appcast.xml
+          printf '%s\n' "      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>" >> _site/appcast.xml
+          printf '%s\n' "      <enclosure url=\"https://github.com/rselbach/jabber/releases/download/v${VERSION}/Jabber-${VERSION}.dmg\" ${SPARKLE_SIGNATURE} type=\"application/octet-stream\"/>" >> _site/appcast.xml
+          printf '%s\n' '    </item>' >> _site/appcast.xml
+          printf '%s\n' '  </channel>' >> _site/appcast.xml
+          printf '%s\n' '</rss>' >> _site/appcast.xml
 
-      - name: Publish appcast to GitHub Pages
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          APPCAST_FILE="${{ github.workspace }}/.build/appcast/appcast.xml"
-          
-          cd /tmp
-          git clone --depth 1 --branch gh-pages "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages 2>/dev/null || {
-            mkdir gh-pages
-            cd gh-pages
-            git init
-            git checkout -b gh-pages
-            git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          }
-          
-          cd /tmp/gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          cp "${APPCAST_FILE}" appcast.xml
-          git add appcast.xml
-          git commit -m "Update appcast for v${{ steps.version.outputs.version }}"
-          git push origin gh-pages
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
 
-      - name: Upload artifact
+      - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
           name: Jabber-${{ steps.version.outputs.version }}
@@ -229,3 +207,15 @@ jobs:
         if: always()
         run: |
           security delete-keychain "${RUNNER_TEMP}/signing.keychain-db" || true
+
+  deploy-appcast:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

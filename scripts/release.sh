@@ -110,12 +110,20 @@ create_bundle() {
   cp "${PROJECT_ROOT}/Info.plist" "${contents}/Info.plist"
   
   # Copy Sparkle.framework into the bundle
-  local sparkle_path
-  sparkle_path=$(find "${PROJECT_ROOT}/.build" -name "Sparkle.framework" -type d | head -1)
-  if [[ -n "${sparkle_path}" ]]; then
+  local sparkle_path="${PROJECT_ROOT}/.build/artifacts/sparkle/Sparkle/Sparkle.framework"
+  if [[ -d "${sparkle_path}" ]]; then
     cp -R "${sparkle_path}" "${frameworks}/"
     echo "    Copied Sparkle.framework"
+  else
+    sparkle_path=$(find "${PROJECT_ROOT}/.build" -name "Sparkle.framework" -type d | head -1)
+    if [[ -n "${sparkle_path}" ]]; then
+      cp -R "${sparkle_path}" "${frameworks}/"
+      echo "    Copied Sparkle.framework"
+    fi
   fi
+  
+  # Add rpath for Frameworks directory
+  install_name_tool -add_rpath @executable_path/../Frameworks "${macos}/${APP_NAME}"
   
   # Copy resources from the build (SwiftPM bundles assets here)
   local bundle_resources="${PROJECT_ROOT}/.build/release/Jabber_Jabber.bundle"
@@ -125,9 +133,6 @@ create_bundle() {
   
   # Copy Assets.xcassets icons directly (actool compile)
   compile_assets "${resources}"
-  
-  # Copy entitlements (for reference, signing uses original file)
-  cp "${PROJECT_ROOT}/Jabber.entitlements" "${contents}/Entitlements.plist"
   
   echo "    Bundle created at: ${app_bundle}"
 }
@@ -151,14 +156,25 @@ sign_app() {
   local app_bundle="${BUILD_DIR}/${APP_NAME}.app"
   local entitlements="${PROJECT_ROOT}/Jabber.entitlements"
   
-  # Sign with hardened runtime (required for notarization)
-  codesign --force --deep --options runtime \
+  # Sign Sparkle.framework first
+  codesign --force --options runtime --deep \
+    --sign "${SIGNING_IDENTITY}" \
+    "${app_bundle}/Contents/Frameworks/Sparkle.framework"
+  
+  # Sign the main executable
+  codesign --force --options runtime \
+    --entitlements "${entitlements}" \
+    --sign "${SIGNING_IDENTITY}" \
+    "${app_bundle}/Contents/MacOS/${APP_NAME}"
+  
+  # Sign the app bundle
+  codesign --force --options runtime \
     --entitlements "${entitlements}" \
     --sign "${SIGNING_IDENTITY}" \
     "${app_bundle}"
   
   # Verify signature
-  codesign --verify --verbose=2 "${app_bundle}"
+  codesign --verify --deep --strict --verbose=2 "${app_bundle}"
   echo "    Signature verified"
 }
 
