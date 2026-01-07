@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let outputManager = OutputManager()
     private let overlayWindow = OverlayWindow()
     private let downloadOverlay = DownloadOverlayWindow()
+    let updaterController = UpdaterController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
@@ -99,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 280, height: 200)
         popover?.behavior = .transient
-        popover?.contentViewController = NSHostingController(rootView: MenuBarView())
+        popover?.contentViewController = NSHostingController(rootView: MenuBarView(updaterController: updaterController))
     }
 
     private func setupHotkey() {

@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuBarView: View {
     @AppStorage("selectedModel") private var selectedModel = "base"
     @State private var modelManager = ModelManager.shared
+    @ObservedObject var updaterController: UpdaterController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -35,6 +36,12 @@ struct MenuBarView: View {
 
             Divider()
 
+            Button("Check for Updates...") {
+                updaterController.checkForUpdates()
+            }
+            .buttonStyle(.link)
+            .disabled(!updaterController.canCheckForUpdates)
+
             HStack {
                 SettingsLink {
                     Text("Settings...")
@@ -58,5 +65,5 @@ struct MenuBarView: View {
 }
 
 #Preview {
-    MenuBarView()
+    MenuBarView(updaterController: UpdaterController())
 }

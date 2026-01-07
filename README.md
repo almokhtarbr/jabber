@@ -32,6 +32,23 @@ For a release build with signing:
 2. Click the icon or use the global hotkey to start dictation
 3. Speak, and text appears wherever your cursor is
 
+## Auto-Updates
+
+Jabber uses [Sparkle](https://sparkle-project.org/) for auto-updates. On first launch (after the second run), it will check for updates automatically.
+
+### Setting up EdDSA keys (maintainers)
+
+1. Download Sparkle from [releases](https://github.com/sparkle-project/Sparkle/releases)
+2. Run `./bin/generate_keys` to create a keypair (stored in Keychain)
+3. Export the private key: `./bin/generate_keys -x sparkle_private_key`
+4. Add the private key as `SPARKLE_EDDSA_PRIVATE_KEY` secret in GitHub
+5. Add your public key to `SUPublicEDKey` in Info.plist
+
+### Appcast
+
+The workflow generates `appcast.xml` as an artifact. Host it at:
+`https://rselbach.github.io/jabber/appcast.xml`
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
