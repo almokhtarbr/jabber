@@ -98,15 +98,24 @@ create_bundle() {
   local contents="${app_bundle}/Contents"
   local macos="${contents}/MacOS"
   local resources="${contents}/Resources"
+  local frameworks="${contents}/Frameworks"
   
   rm -rf "${BUILD_DIR}"
-  mkdir -p "${macos}" "${resources}"
+  mkdir -p "${macos}" "${resources}" "${frameworks}"
   
   # Copy executable
   cp "${PROJECT_ROOT}/.build/release/Jabber" "${macos}/${APP_NAME}"
   
   # Copy Info.plist
   cp "${PROJECT_ROOT}/Info.plist" "${contents}/Info.plist"
+  
+  # Copy Sparkle.framework into the bundle
+  local sparkle_path
+  sparkle_path=$(find "${PROJECT_ROOT}/.build" -name "Sparkle.framework" -type d | head -1)
+  if [[ -n "${sparkle_path}" ]]; then
+    cp -R "${sparkle_path}" "${frameworks}/"
+    echo "    Copied Sparkle.framework"
+  fi
   
   # Copy resources from the build (SwiftPM bundles assets here)
   local bundle_resources="${PROJECT_ROOT}/.build/release/Jabber_Jabber.bundle"

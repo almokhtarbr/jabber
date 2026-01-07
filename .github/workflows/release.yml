@@ -78,10 +78,16 @@ jobs:
         run: |
           APP_BUNDLE=".build/release-bundle/Jabber.app"
           CONTENTS="${APP_BUNDLE}/Contents"
-          mkdir -p "${CONTENTS}/MacOS" "${CONTENTS}/Resources"
+          mkdir -p "${CONTENTS}/MacOS" "${CONTENTS}/Resources" "${CONTENTS}/Frameworks"
           
           cp .build/release/Jabber "${CONTENTS}/MacOS/Jabber"
           cp Info.plist "${CONTENTS}/Info.plist"
+          
+          # Copy Sparkle.framework into the bundle
+          SPARKLE_PATH=$(find .build -name "Sparkle.framework" -type d | head -1)
+          if [[ -n "${SPARKLE_PATH}" ]]; then
+            cp -R "${SPARKLE_PATH}" "${CONTENTS}/Frameworks/"
+          fi
           
           xcrun actool Sources/Jabber/Assets.xcassets \
             --compile "${CONTENTS}/Resources" \

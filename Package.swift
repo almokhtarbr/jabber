@@ -24,6 +24,9 @@ let package = Package(
             path: "Sources/Jabber",
             resources: [
                 .process("Assets.xcassets")
+            ],
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks"])
             ]
         )
     ]
