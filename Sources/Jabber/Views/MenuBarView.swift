@@ -39,21 +39,24 @@ struct MenuBarView: View {
             Button("Check for Updates...") {
                 updaterController.checkForUpdates()
             }
-            .buttonStyle(.link)
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
             .disabled(!updaterController.canCheckForUpdates)
 
             HStack {
                 SettingsLink {
                     Text("Settings...")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
 
                 Spacer()
 
                 Button("Quit") {
                     NSApp.terminate(nil)
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
             }
         }
         .padding()

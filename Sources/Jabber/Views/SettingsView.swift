@@ -8,19 +8,24 @@ struct SettingsView: View {
 
     @State private var modelManager = ModelManager.shared
 
+    @State private var selectedTab = "general"
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             generalTab
+                .tag("general")
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
 
             modelsTab
+                .tag("models")
                 .tabItem {
                     Label("Models", systemImage: "cube.box")
                 }
 
             vocabularyTab
+                .tag("vocabulary")
                 .tabItem {
                     Label("Vocabulary", systemImage: "text.book.closed")
                 }
