@@ -7,6 +7,9 @@ enum Constants {
     enum Notifications {
         /// Posted when the selected Whisper model changes
         static let modelDidChange = Notification.Name("com.rselbach.jabber.modelDidChange")
+
+        /// Posted when a model download starts/progresses/finishes
+        static let modelDownloadStateDidChange = Notification.Name("com.rselbach.jabber.modelDownloadStateDidChange")
     }
 
     /// Supported Whisper transcription languages (from WhisperKit)
@@ -41,15 +44,53 @@ enum Constants {
         "vietnamese": "vi", "welsh": "cy", "yiddish": "yi", "yoruba": "yo"
     ]
 
+    // some language codes have multiple names in WhisperKit; pick one for UI
+    private static let preferredLanguageNameByCode: [String: String] = [
+        "ca": "catalan",
+        "es": "spanish",
+        "ht": "haitian creole",
+        "lb": "luxembourgish",
+        "my": "burmese",
+        "nl": "dutch",
+        "pa": "punjabi",
+        "ps": "pashto",
+        "ro": "romanian",
+        "si": "sinhala",
+        "zh": "chinese"
+    ]
+
+    private static let languageDisplayNameByCode: [String: String] = {
+        var byCode: [String: String] = [:]
+
+        for (name, code) in languages {
+            if let preferred = preferredLanguageNameByCode[code], name == preferred {
+                byCode[code] = name
+                continue
+            }
+            if byCode[code] == nil {
+                byCode[code] = name
+            }
+        }
+
+        // ensure preferred names win deterministically
+        for (code, preferredName) in preferredLanguageNameByCode {
+            if languages[preferredName] == code {
+                byCode[code] = preferredName
+            }
+        }
+
+        return byCode
+    }()
+
     /// Pre-sorted languages for UI display (cached to avoid repeated sorting)
     static let sortedLanguages: [(name: String, code: String)] = {
-        languages
-            .map { (name: $0.key.capitalized, code: $0.value) }
+        languageDisplayNameByCode
+            .map { (name: $0.value.capitalized, code: $0.key) }
             .sorted { $0.name < $1.name }
     }()
 
     /// Valid language codes for validation (includes all unique codes from languages dict)
-    static let validLanguageCodes: Set<String> = Set(languages.values)
+    static let validLanguageCodes: Set<String> = Set(languageDisplayNameByCode.keys)
 
     /// Default language based on system locale, falls back to "auto" if unsupported
     static let defaultLanguage: String = {

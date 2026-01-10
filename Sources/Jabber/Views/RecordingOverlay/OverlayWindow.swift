@@ -42,14 +42,15 @@ final class OverlayWindow {
 
     @discardableResult
     private func createWindow() -> Bool {
-        guard let screen = NSScreen.main else { return false }
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return false }
+        let screenFrame = screen.visibleFrame
 
         let windowWidth: CGFloat = 400
         let windowHeight: CGFloat = 60
         let bottomMargin: CGFloat = 100
 
-        let x = (screen.frame.width - windowWidth) / 2
-        let y = bottomMargin
+        let x = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2
+        let y = screenFrame.origin.y + bottomMargin
 
         let frame = NSRect(x: x, y: y, width: windowWidth, height: windowHeight)
 

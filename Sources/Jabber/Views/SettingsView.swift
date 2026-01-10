@@ -33,7 +33,7 @@ struct SettingsView: View {
                     Label("Vocabulary", systemImage: "text.book.closed")
                 }
         }
-        .frame(width: 450, height: 400)
+        .frame(width: 450, height: 420)
         .onAppear {
             modelManager.refreshModels()
         }
@@ -147,10 +147,10 @@ struct SettingsView: View {
         Form {
             Section {
                 TextEditor(text: $vocabularyPrompt)
-                    .frame(height: 120)
+                    .frame(minHeight: 200, maxHeight: .infinity)
                     .font(.body.monospaced())
 
-                Text("Add names, technical terms, or jargon to improve recognition. One per line or comma-separated.")
+                Text("Add names, technical terms, or jargon to improve recognition. One per line.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {

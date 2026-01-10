@@ -33,7 +33,6 @@ final class AudioCaptureService {
         guard !isCapturing else { return }
 
         queue.sync { capturedSamples.removeAll() }
-        isCapturing = true
 
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
@@ -47,13 +46,22 @@ final class AudioCaptureService {
             throw AudioCaptureError.invalidFormat
         }
 
-        setConverter(AVAudioConverter(from: inputFormat, to: outputFormat))
+        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+            throw AudioCaptureError.converterUnavailable
+        }
+        setConverter(converter)
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.processBuffer(buffer)
         }
 
-        try engine.start()
+        isCapturing = true
+        do {
+            try engine.start()
+        } catch {
+            stopCapture()
+            throw error
+        }
     }
 
     func stopCapture() {
@@ -88,11 +96,11 @@ final class AudioCaptureService {
         }
 
         // Convert to 16kHz mono
-        guard let outputFormat = converter.outputFormat as AVAudioFormat?,
-              let convertedBuffer = AVAudioPCMBuffer(
-                  pcmFormat: outputFormat,
-                  frameCapacity: AVAudioFrameCount(targetSampleRate / 10)
-              ) else { return }
+        let outputFormat = converter.outputFormat
+        guard let convertedBuffer = AVAudioPCMBuffer(
+            pcmFormat: outputFormat,
+            frameCapacity: AVAudioFrameCount(targetSampleRate / 10)
+        ) else { return }
 
         var error: NSError?
         var hasProvidedBuffer = false
@@ -111,7 +119,7 @@ final class AudioCaptureService {
         if let error {
             logger.error("Audio conversion failed: \(error.localizedDescription)")
             DispatchQueue.main.async { [weak self] in
-                self?.onConversionError?(error)
+                self?.onConversionError?(AudioCaptureError.conversionFailed(error))
             }
             return
         }
@@ -129,12 +137,15 @@ final class AudioCaptureService {
 
 enum AudioCaptureError: Error, LocalizedError {
     case invalidFormat
+    case converterUnavailable
     case conversionFailed(Error)
 
     var errorDescription: String? {
         switch self {
         case .invalidFormat:
             return "Invalid audio format configuration"
+        case .converterUnavailable:
+            return "Audio converter could not be created"
         case .conversionFailed(let error):
             return "Audio conversion failed: \(error.localizedDescription)"
         }

@@ -26,15 +26,17 @@ final class NotificationService {
 
     private func setupNotifications() {
         guard let center = notificationCenter else { return }
+        let logger = self.logger
 
         center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             if let error {
-                self?.logger.error("Failed to request notification authorization: \(error.localizedDescription)")
+                logger.error("Failed to request notification authorization: \(error.localizedDescription)")
             }
             Task { @MainActor in
-                self?.isAuthorized = granted
+                guard let self else { return }
+                self.isAuthorized = granted
                 if !granted {
-                    self?.logger.info("User denied notification permissions, will use alert fallback")
+                    logger.info("User denied notification permissions, will use alert fallback")
                 }
             }
         }
@@ -59,20 +61,41 @@ final class NotificationService {
             return
         }
 
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = message
-        content.sound = .default
+        let logger = self.logger
+        center.getNotificationSettings { [weak self] settings in
+            let authorised: Bool
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                authorised = true
+            default:
+                authorised = false
+            }
 
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
-            content: content,
-            trigger: nil
-        )
+            Task { @MainActor in
+                guard let self else { return }
+                self.isAuthorized = authorised
+                guard authorised else {
+                    logger.info("Notification permission not granted, using alert fallback: \(title)")
+                    self.showAlert(title: title, message: message, style: .informational)
+                    return
+                }
 
-        center.add(request) { error in
-            if let error {
-                self.logger.error("Failed to show notification: \(error.localizedDescription)")
+                let content = UNMutableNotificationContent()
+                content.title = title
+                content.body = message
+                content.sound = .default
+
+                let request = UNNotificationRequest(
+                    identifier: UUID().uuidString,
+                    content: content,
+                    trigger: nil
+                )
+
+                do {
+                    try await center.add(request)
+                } catch {
+                    logger.error("Failed to show notification: \(error.localizedDescription)")
+                }
             }
         }
     }

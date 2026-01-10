@@ -3,6 +3,7 @@ import Carbon
 import ApplicationServices
 import os
 
+@MainActor
 final class OutputManager {
     enum OutputMode: String {
         case clipboard

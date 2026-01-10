@@ -37,13 +37,14 @@ final class DownloadOverlayWindow {
 
     @discardableResult
     private func createWindow() -> Bool {
-        guard let screen = NSScreen.main else { return false }
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return false }
+        let screenFrame = screen.visibleFrame
 
         let windowWidth: CGFloat = 320
         let windowHeight: CGFloat = 80
 
-        let x = (screen.frame.width - windowWidth) / 2
-        let y = (screen.frame.height - windowHeight) / 2
+        let x = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2
+        let y = screenFrame.origin.y + (screenFrame.height - windowHeight) / 2
 
         let frame = NSRect(x: x, y: y, width: windowWidth, height: windowHeight)
 

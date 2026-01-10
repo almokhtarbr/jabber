@@ -39,13 +39,20 @@ final class WhisperStateObserver: @unchecked Sendable {
 actor WhisperService {
     private var whisperKit: WhisperKit?
     private var isLoading = false
+    private var loadedModelId: String?
+
+    /// Generation counter for invalidating in-flight model loads.
+    /// Incremented by unloadModel() so that any pending loadModel() calls
+    /// detect the generation mismatch and throw CancellationError instead
+    /// of clobbering the new state.
+    private var loadGeneration: UInt64 = 0
+
     nonisolated let stateObserver = WhisperStateObserver()
     private let logger = Logger(subsystem: "com.rselbach.jabber", category: "WhisperService")
-    private static let loadTimeout: Duration = .seconds(60)
+    private static let loadTimeout: Duration = .seconds(600)
 
     enum State: Sendable {
         case notReady
-        case downloading(progress: Double, status: String)
         case loading
         case ready
         case error(String)
@@ -86,6 +93,7 @@ actor WhisperService {
             // Invalid code - fall back to auto-detect and notify user
             logger.warning("Invalid language code '\(language)' - falling back to auto-detect")
             selectedLanguage = "auto"
+            UserDefaults.standard.set("auto", forKey: "selectedLanguage")
 
             Task { @MainActor in
                 NotificationService.shared.showWarning(
@@ -97,19 +105,23 @@ actor WhisperService {
     }
 
     func ensureModelLoaded() async throws {
-        if whisperKit != nil { return }
-        try await loadModel()
+        let desiredModelId = UserDefaults.standard.string(forKey: "selectedModel") ?? "base"
+        if whisperKit != nil, loadedModelId == desiredModelId {
+            return
+        }
+        try await loadModel(desiredModelId: desiredModelId)
     }
 
     func unloadModel() async {
+        loadGeneration &+= 1
         whisperKit = nil
+        loadedModelId = nil
         setReady(false)
         notifyState(.notReady)
     }
 
     func currentModelId() async -> String? {
-        guard whisperKit != nil else { return nil }
-        return UserDefaults.standard.string(forKey: "selectedModel")
+        loadedModelId
     }
 
     func transcribe(samples: [Float]) async throws -> String {
@@ -145,47 +157,76 @@ actor WhisperService {
         return results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func loadModel() async throws {
-        guard !isLoading else {
-            // Another task is loading; wait until complete or timeout
-            try await waitForModelLoad()
+    /// Loads the specified model, coordinating with concurrent callers.
+    ///
+    /// Concurrency model:
+    /// - Only one task performs the actual load at a time (guarded by `isLoading`).
+    /// - Other callers wait via `waitForModelLoad()`, then either reuse the result
+    ///   or start a new load if the previous one failed or loaded a different model.
+    /// - `loadGeneration` invalidates in-flight loads when `unloadModel()` is called,
+    ///   ensuring stale loads don't clobber newer state.
+    private func loadModel(desiredModelId: String) async throws {
+        while true {
+            if isLoading {
+                try await waitForModelLoad()
+            }
+
+            if whisperKit != nil, loadedModelId == desiredModelId {
+                setReady(true)
+                notifyState(.ready)
+                return
+            }
+
+            if whisperKit != nil, loadedModelId != desiredModelId {
+                whisperKit = nil
+                loadedModelId = nil
+                setReady(false)
+                notifyState(.notReady)
+            }
+
+            let currentLoadGeneration = loadGeneration
+            isLoading = true
+            defer { isLoading = false }
+
+            try Task.checkCancellation()
+            guard loadGeneration == currentLoadGeneration else { throw CancellationError() }
+
+            var modelIdToLoad = desiredModelId
+            let modelFolder: URL
+            do {
+                modelFolder = try await ModelManager.shared.ensureModelDownloaded(modelIdToLoad)
+            } catch let error as ModelError {
+                switch error {
+                case .modelNotFound:
+                    logger.warning("Unknown model id '\(modelIdToLoad)', falling back to base")
+                    modelIdToLoad = "base"
+                    UserDefaults.standard.set(modelIdToLoad, forKey: "selectedModel")
+                    modelFolder = try await ModelManager.shared.ensureModelDownloaded(modelIdToLoad)
+                default:
+                    throw error
+                }
+            }
+
+            try Task.checkCancellation()
+            guard loadGeneration == currentLoadGeneration else { throw CancellationError() }
+
+            notifyState(.loading)
+
+            let kit = try await WhisperKit(modelFolder: modelFolder.path)
+
+            try Task.checkCancellation()
+            guard loadGeneration == currentLoadGeneration else { throw CancellationError() }
+
+            whisperKit = kit
+            loadedModelId = modelIdToLoad
+            setReady(true)
+            notifyState(.ready)
             return
         }
-
-        isLoading = true
-        defer { isLoading = false }
-
-        let selectedModel = UserDefaults.standard.string(forKey: "selectedModel") ?? "base"
-
-        let modelFolder: URL
-        if let existingFolder = Constants.ModelPaths.localModelFolder(for: selectedModel) {
-            modelFolder = existingFolder
-        } else {
-            modelFolder = try await WhisperKit.download(
-                variant: selectedModel,
-                progressCallback: { [weak self] progress in
-                    let pct = progress.fractionCompleted
-                    Task { @MainActor in
-                        self?.notifyState(.downloading(progress: pct, status: "Downloading \(selectedModel)... \(Int(pct * 100))%"))
-                    }
-                }
-            )
-        }
-
-        notifyState(.loading)
-
-        let kit = try await WhisperKit(modelFolder: modelFolder.path)
-
-        whisperKit = kit
-        setReady(true)
-        notifyState(.ready)
     }
 
     private func getWhisperKit() async throws -> WhisperKit {
-        if let kit = whisperKit {
-            return kit
-        }
-        try await loadModel()
+        try await ensureModelLoaded()
         guard let kit = whisperKit else {
             throw WhisperError.loadFailed
         }
@@ -208,11 +249,6 @@ actor WhisperService {
 
             // Exponential backoff with max cap
             backoffDelay = min(backoffDelay * 2, maxBackoff)
-        }
-
-        guard whisperKit != nil else {
-            logger.error("Model load completed but whisperKit is nil")
-            throw WhisperError.loadFailed
         }
     }
 }

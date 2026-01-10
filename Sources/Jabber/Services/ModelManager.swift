@@ -2,11 +2,27 @@ import Foundation
 import WhisperKit
 import os
 
+struct ModelDownloadState {
+    enum Phase: String {
+        case started
+        case progress
+        case finished
+        case failed
+    }
+
+    let modelId: String
+    let progress: Double
+    let status: String
+    let phase: Phase
+    let errorDescription: String?
+}
+
 @MainActor
 @Observable
 final class ModelManager {
     static let shared = ModelManager()
     private let logger = Logger(subsystem: "com.rselbach.jabber", category: "ModelManager")
+    private static let downloadWaitTimeout: Duration = .seconds(600)
 
     struct Model: Identifiable {
         let id: String
@@ -55,18 +71,57 @@ final class ModelManager {
         }
     }
 
-    func downloadModel(_ modelId: String) async throws {
+    func ensureModelDownloaded(_ modelId: String) async throws -> URL {
+        if let existing = Constants.ModelPaths.localModelFolder(for: modelId) {
+            return existing
+        }
+        return try await downloadModel(modelId)
+    }
+
+    @discardableResult
+    func downloadModel(_ modelId: String) async throws -> URL {
         // Verify model exists before starting
         guard models.contains(where: { $0.id == modelId }) else {
             logger.warning("Attempted to download non-existent model: \(modelId)")
-            return
+            throw ModelError.modelNotFound(modelId: modelId)
+        }
+
+        if let existing = Constants.ModelPaths.localModelFolder(for: modelId) {
+            if let idx = models.firstIndex(where: { $0.id == modelId }) {
+                models[idx].isDownloaded = true
+                models[idx].isDownloading = false
+                models[idx].downloadProgress = 1.0
+            }
+            return existing
         }
 
         // Set initial download state
-        if let idx = models.firstIndex(where: { $0.id == modelId }) {
-            models[idx].isDownloading = true
-            models[idx].downloadProgress = 0
+        guard let idx = models.firstIndex(where: { $0.id == modelId }) else {
+            throw ModelError.modelNotFound(modelId: modelId)
         }
+
+        if models[idx].isDownloading {
+            try await waitForDownloadToFinish(modelId: modelId)
+            if let existing = Constants.ModelPaths.localModelFolder(for: modelId) {
+                return existing
+            }
+            throw ModelError.modelNotFound(modelId: modelId)
+        }
+
+        let modelName = models[idx].name
+        models[idx].isDownloading = true
+        models[idx].downloadProgress = 0
+
+        NotificationCenter.default.post(
+            name: Constants.Notifications.modelDownloadStateDidChange,
+            object: ModelDownloadState(
+                modelId: modelId,
+                progress: 0,
+                status: "Downloading \(modelName)... 0%",
+                phase: .started,
+                errorDescription: nil
+            )
+        )
 
         defer {
             // Always clear downloading state, even on error
@@ -75,24 +130,75 @@ final class ModelManager {
             }
         }
 
-        _ = try await WhisperKit.download(
-            variant: modelId,
-            progressCallback: { [weak self] progress in
-                Task { @MainActor in
-                    guard let self else { return }
-                    // Look up index each time to avoid stale references
-                    if let idx = self.models.firstIndex(where: { $0.id == modelId }) {
-                        self.models[idx].downloadProgress = progress.fractionCompleted
+        let modelFolder: URL
+        do {
+            modelFolder = try await WhisperKit.download(
+                variant: modelId,
+                progressCallback: { [weak self] progress in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        // Look up index each time to avoid stale references
+                        if let idx = self.models.firstIndex(where: { $0.id == modelId }) {
+                            let pct = progress.fractionCompleted
+                            self.models[idx].downloadProgress = pct
+                            NotificationCenter.default.post(
+                                name: Constants.Notifications.modelDownloadStateDidChange,
+                                object: ModelDownloadState(
+                                    modelId: modelId,
+                                    progress: pct,
+                                    status: "Downloading \(modelName)... \(Int(pct * 100))%",
+                                    phase: .progress,
+                                    errorDescription: nil
+                                )
+                            )
+                        }
                     }
                 }
-            }
-        )
+            )
+        } catch is CancellationError {
+            NotificationCenter.default.post(
+                name: Constants.Notifications.modelDownloadStateDidChange,
+                object: ModelDownloadState(
+                    modelId: modelId,
+                    progress: models[idx].downloadProgress,
+                    status: "Download cancelled: \(modelName)",
+                    phase: .failed,
+                    errorDescription: "cancelled"
+                )
+            )
+            throw CancellationError()
+        } catch {
+            NotificationCenter.default.post(
+                name: Constants.Notifications.modelDownloadStateDidChange,
+                object: ModelDownloadState(
+                    modelId: modelId,
+                    progress: models[idx].downloadProgress,
+                    status: "Download failed: \(modelName)",
+                    phase: .failed,
+                    errorDescription: error.localizedDescription
+                )
+            )
+            throw error
+        }
 
         // Look up index after download completes
         if let idx = models.firstIndex(where: { $0.id == modelId }) {
             models[idx].isDownloaded = true
             models[idx].downloadProgress = 1.0
         }
+
+        NotificationCenter.default.post(
+            name: Constants.Notifications.modelDownloadStateDidChange,
+            object: ModelDownloadState(
+                modelId: modelId,
+                progress: 1.0,
+                status: "Downloaded \(modelName)",
+                phase: .finished,
+                errorDescription: nil
+            )
+        )
+
+        return modelFolder
     }
 
     func deleteModel(_ modelId: String) throws {
@@ -144,16 +250,32 @@ final class ModelManager {
             Constants.ModelPaths.localModelFolder(for: def.id) != nil ? def.id : nil
         }
     }
+
+    private func waitForDownloadToFinish(modelId: String) async throws {
+        let startTime = ContinuousClock.now
+        while let idx = models.firstIndex(where: { $0.id == modelId }) {
+            try Task.checkCancellation()
+            guard models[idx].isDownloading else { return }
+            if ContinuousClock.now - startTime > Self.downloadWaitTimeout {
+                throw ModelError.downloadTimeout(modelId: modelId)
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        throw ModelError.modelNotFound(modelId: modelId)
+    }
 }
 
 enum ModelError: Error, LocalizedError {
     case cannotDeleteActiveModel
+    case downloadTimeout(modelId: String)
     case modelNotFound(modelId: String)
 
     var errorDescription: String? {
         switch self {
         case .cannotDeleteActiveModel:
             return "Cannot delete the currently active model. Please select a different model first."
+        case .downloadTimeout(let modelId):
+            return "Download timed out for model '\(modelId)'."
         case .modelNotFound(let modelId):
             return "Model '\(modelId)' not found or already deleted."
         }
