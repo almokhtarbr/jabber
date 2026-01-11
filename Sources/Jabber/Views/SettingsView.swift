@@ -35,7 +35,7 @@ struct SettingsView: View {
                     Label("Vocabulary", systemImage: "text.book.closed")
                 }
         }
-        .frame(width: 450, height: 420)
+        .frame(width: 520, height: 560)
         .onAppear {
             modelManager.refreshModels()
         }
