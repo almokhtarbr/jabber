@@ -42,6 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var downloadStatesByModelId: [String: ModelDownloadState] = [:]
     private var activeDownloadModelId: String?
 
+    private enum NonDictationUIState {
+        case ready
+        case downloading(ModelDownloadState)
+        case loadingModel
+        case error
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
         setupHotkey()
@@ -387,21 +394,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if dictationState != .idle {
-            downloadOverlay.hide()
-            return
-        }
-
-        if state.phase == .finished,
-           isModelLoadInProgress,
-           state.modelId == UserDefaults.standard.string(forKey: "selectedModel") {
-            downloadOverlay.show()
-            downloadOverlay.updateProgress(0, status: "Loading model...", indeterminate: true)
-            updateStatusIcon(state: .downloading)
-            return
-        }
-
-        syncNonDictationUI()
+        let forceLoading = state.phase == .finished
+            && isModelLoadInProgress
+            && state.modelId == UserDefaults.standard.string(forKey: "selectedModel")
+        syncNonDictationUI(forceLoading: forceLoading)
     }
 
     private func currentDownloadForUI() -> ModelDownloadState? {
@@ -416,40 +412,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return downloadStatesByModelId.values.first
     }
 
-    private func syncNonDictationUI() {
-        guard dictationState == .idle else { return }
-
-        if case .error = modelState {
+    private func syncNonDictationUI(forceLoading: Bool = false) {
+        guard dictationState == .idle else {
             downloadOverlay.hide()
-            updateStatusIcon(state: .error)
             return
+        }
+
+        applyNonDictationUI(resolveNonDictationUI(forceLoading: forceLoading))
+    }
+
+    private func resolveNonDictationUI(forceLoading: Bool) -> NonDictationUIState {
+        if case .error = modelState {
+            return .error
+        }
+
+        if forceLoading {
+            return .loadingModel
         }
 
         if isModelLoadInProgress, case .loading = modelState {
-            downloadOverlay.show()
-            downloadOverlay.updateProgress(0, status: "Loading model...", indeterminate: true)
-            updateStatusIcon(state: .downloading)
-            return
+            return .loadingModel
         }
 
         if let download = currentDownloadForUI() {
-            downloadOverlay.show()
-            downloadOverlay.updateProgress(download.progress, status: download.status)
-            updateStatusIcon(state: .downloading)
-            return
+            return .downloading(download)
         }
 
         switch modelState {
         case .ready, .notReady:
+            return .ready
+        case .error:
+            return .error
+        case .loading:
+            return .loadingModel
+        }
+    }
+
+    private func applyNonDictationUI(_ state: NonDictationUIState) {
+        switch state {
+        case .ready:
             downloadOverlay.hide()
             updateStatusIcon(state: .ready)
-        case .error:
-            downloadOverlay.hide()
-            updateStatusIcon(state: .error)
-        case .loading:
+        case .downloading(let download):
+            downloadOverlay.show()
+            downloadOverlay.updateProgress(download.progress, status: download.status)
+            updateStatusIcon(state: .downloading)
+        case .loadingModel:
             downloadOverlay.show()
             downloadOverlay.updateProgress(0, status: "Loading model...", indeterminate: true)
             updateStatusIcon(state: .downloading)
+        case .error:
+            downloadOverlay.hide()
+            updateStatusIcon(state: .error)
         }
     }
 }
