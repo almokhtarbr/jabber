@@ -35,14 +35,8 @@ struct MenuBarView: View {
 
                     HStack {
                         Text("Language:")
-                        Picker("", selection: $selectedLanguage) {
-                            Text("Auto-detect").tag("auto")
-                            Divider()
-                            ForEach(Constants.sortedLanguages, id: \.code) { lang in
-                                Text(lang.name).tag(lang.code)
-                            }
-                        }
-                        .labelsHidden()
+                        LanguagePicker(selectedLanguage: $selectedLanguage)
+                            .labelsHidden()
                     }
                 }
             }

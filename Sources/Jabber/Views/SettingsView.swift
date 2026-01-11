@@ -81,13 +81,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("Language", selection: $selectedLanguage) {
-                    Text("Auto-detect").tag("auto")
-                    Divider()
-                    ForEach(Constants.sortedLanguages, id: \.code) { lang in
-                        Text(lang.name).tag(lang.code)
-                    }
-                }
+                LanguagePicker(selectedLanguage: $selectedLanguage)
 
                 Text("Select a specific language or use auto-detect to identify it automatically.")
                     .font(.caption)
@@ -158,6 +152,20 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+struct LanguagePicker: View {
+    @Binding var selectedLanguage: String
+
+    var body: some View {
+        Picker("Language", selection: $selectedLanguage) {
+            Text("Auto-detect").tag("auto")
+            Divider()
+            ForEach(Constants.sortedLanguages, id: \.code) { lang in
+                Text(lang.name).tag(lang.code)
+            }
+        }
     }
 }
 
