@@ -4,6 +4,13 @@ A macOS menu bar app for local speech-to-text transcription using [WhisperKit](h
 
 All audio is processed entirely on-device — nothing leaves your Mac.
 
+> **⚠️ Personal Project Notice**
+>
+> This code was written for my own use. It is **not supported** in any way.
+> No issues, no PRs, no questions answered, no guarantees it works.
+> You're welcome to use it, fork it, modify it, sell it, burn it, whatever.
+> Just don't expect anything from me. Good luck.
+
 ## Requirements
 
 - macOS 14.0+
@@ -51,4 +58,4 @@ The workflow generates `appcast.xml` as an artifact. Host it at:
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+Public Domain — see [LICENSE](LICENSE). Do whatever you want with it.
