@@ -19,7 +19,14 @@ final class OutputManager {
     }
 
     func output(_ text: String) {
-        copyToClipboard(text)
+        guard copyToClipboard(text) else {
+            NotificationService.shared.showError(
+                title: "Copy Failed",
+                message: "Could not copy transcription to clipboard.",
+                critical: false
+            )
+            return
+        }
 
         if mode == .pasteInPlace {
             guard checkAccessibilityPermission() else {
@@ -52,13 +59,14 @@ final class OutputManager {
         return true
     }
 
-    private func copyToClipboard(_ text: String) {
+    private func copyToClipboard(_ text: String) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         let success = pasteboard.setString(text, forType: .string)
         if !success {
             logger.warning("Failed to copy text to clipboard")
         }
+        return success
     }
 
     private func sendPaste() {
