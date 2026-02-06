@@ -142,13 +142,15 @@ compile_assets() {
   local assets_path="${PROJECT_ROOT}/Sources/Jabber/Assets.xcassets"
   
   if [[ -d "${assets_path}" ]]; then
-    xcrun actool "${assets_path}" \
+    if ! xcrun actool "${assets_path}" \
       --compile "${resources_dir}" \
       --platform macosx \
       --minimum-deployment-target 14.0 \
       --app-icon AppIcon \
-      --output-partial-info-plist "${BUILD_DIR}/AssetInfo.plist" \
-      2>/dev/null || true
+      --output-partial-info-plist "${BUILD_DIR}/AssetInfo.plist"; then
+      echo "Error: failed to compile assets at ${assets_path}" >&2
+      return 1
+    fi
   fi
 }
 
