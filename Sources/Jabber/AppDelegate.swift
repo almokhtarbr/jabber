@@ -445,8 +445,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .loadingModel
         case (_, _, _, let download?):
             return .downloading(download)
-        case (_, .ready, _, _), (_, .notReady, _, _):
+        case (_, .ready, _, _):
             return .ready
+        case (_, .notReady, _, _):
+            return .loadingModel
         case (_, .loading, _, _):
             return .loadingModel
         }
