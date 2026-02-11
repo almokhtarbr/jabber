@@ -111,15 +111,75 @@ enum Constants {
         private static let repoName = "argmaxinc/whisperkit-coreml"
         private static let logger = Logger(subsystem: "com.rselbach.jabber", category: "ModelPaths")
 
+        /// The base URL passed to WhisperKit.download(downloadBase:).
+        /// HubApi appends "models/<repo>" underneath this path.
+        /// Uses Application Support so models are never synced/evicted by iCloud.
+        static func downloadBase() -> URL? {
+            guard let appSupport = FileManager.default.urls(
+                for: .applicationSupportDirectory, in: .userDomainMask
+            ).first else { return nil }
+            return appSupport
+                .appendingPathComponent("com.rselbach.jabber")
+                .appendingPathComponent("huggingface")
+        }
+
         /// Returns the base directory where models are stored
         static func modelsBaseURL() -> URL? {
-            guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-                return nil
-            }
+            guard let base = downloadBase() else { return nil }
+            return base
+                .appendingPathComponent("models")
+                .appendingPathComponent(repoName)
+        }
+
+        /// Legacy path from before the iCloud fix (~/Documents/huggingface/)
+        private static func legacyModelsBaseURL() -> URL? {
+            guard let docs = FileManager.default.urls(
+                for: .documentDirectory, in: .userDomainMask
+            ).first else { return nil }
             return docs
                 .appendingPathComponent("huggingface")
                 .appendingPathComponent("models")
                 .appendingPathComponent(repoName)
+        }
+
+        /// Moves models from ~/Documents/huggingface/ to ~/Library/Application Support/
+        /// so they are no longer subject to iCloud sync/eviction.
+        static func migrateFromDocumentsIfNeeded() {
+            let fm = FileManager.default
+            guard let oldBase = legacyModelsBaseURL(),
+                  let newBase = modelsBaseURL(),
+                  fm.fileExists(atPath: oldBase.path) else { return }
+
+            do {
+                let folders = try fm.contentsOfDirectory(atPath: oldBase.path)
+                guard !folders.isEmpty else { return }
+
+                try fm.createDirectory(at: newBase, withIntermediateDirectories: true)
+
+                for folder in folders {
+                    let src = oldBase.appendingPathComponent(folder)
+                    let dst = newBase.appendingPathComponent(folder)
+                    guard !fm.fileExists(atPath: dst.path) else { continue }
+                    try fm.moveItem(at: src, to: dst)
+                    logger.info("Migrated model \(folder) to Application Support")
+                }
+
+                // Clean up empty legacy directories
+                let remaining = try fm.contentsOfDirectory(atPath: oldBase.path)
+                if remaining.isEmpty {
+                    try? fm.removeItem(at: oldBase)
+                    // Remove parent dirs if empty
+                    let hubDir = oldBase.deletingLastPathComponent().deletingLastPathComponent()
+                    let hubContents = try? fm.contentsOfDirectory(atPath: hubDir.path)
+                    if hubContents?.isEmpty ?? false {
+                        try? fm.removeItem(at: hubDir)
+                    }
+                }
+
+                logger.info("Model migration from Documents complete")
+            } catch {
+                logger.error("Model migration failed: \(error.localizedDescription)")
+            }
         }
 
         /// Finds the local folder for a specific model ID
@@ -127,7 +187,10 @@ enum Constants {
         /// - Returns: URL to the model folder if found, nil otherwise
         static func localModelFolder(for modelId: String) -> URL? {
             guard let base = modelsBaseURL() else { return nil }
+            return findModelFolder(for: modelId, in: base)
+        }
 
+        private static func findModelFolder(for modelId: String, in base: URL) -> URL? {
             let fm = FileManager.default
             guard fm.fileExists(atPath: base.path) else { return nil }
 

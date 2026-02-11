@@ -50,6 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Hide dock icon (menu bar app only)
         NSApp.setActivationPolicy(.accessory)
 
+        // Move models out of ~/Documents/ (iCloud-synced) to ~/Library/Application Support/
+        Constants.ModelPaths.migrateFromDocumentsIfNeeded()
+
         updaterController.checkForUpdatesOnLaunchIfNeeded()
 
         modelLoadTask = Task { [weak self] in
