@@ -149,6 +149,7 @@ final class ModelManager {
         do {
             modelFolder = try await WhisperKit.download(
                 variant: modelId,
+                downloadBase: Constants.ModelPaths.downloadBase(),
                 progressCallback: { [weak self] progress in
                     Task { @MainActor in
                         guard let self else { return }

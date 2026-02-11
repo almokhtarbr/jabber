@@ -231,7 +231,20 @@ actor WhisperService {
 
             notifyState(.loading)
 
-            let kit = try await WhisperKit(modelFolder: modelFolder.path)
+            let kit = try await withThrowingTaskGroup(of: WhisperKit.self) { group in
+                group.addTask {
+                    try await WhisperKit(modelFolder: modelFolder.path)
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(120))
+                    throw WhisperError.loadTimeout
+                }
+                guard let result = try await group.next() else {
+                    throw WhisperError.loadFailed
+                }
+                group.cancelAll()
+                return result
+            }
 
             try Task.checkCancellation()
             guard loadGeneration == currentLoadGeneration else { throw CancellationError() }
